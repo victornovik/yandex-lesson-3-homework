@@ -1,0 +1,91 @@
+@startuml
+!include <C4/C4_Container>
+
+title Открытие депозитов
+
+Person(client, "Клиент")
+Person(cc_mgr, "Менеджер кол-центра", "Обрабатывает заявки с сайта")
+Person(dep_mgr, "Менеджер бэк-офиса депозитов", "Ведёт ставки, обрабатывает заявки")
+Person(cred_mgr, "Сотрудник кредитования", "Вносит показатели кредитного риска")
+Person(front, "Сотрудник отделения", "Открывает депозит, загружает документы")
+
+Container(apiGw, "API Gateway", "Nginx", "Распределение запросов между ЦОД, серверами и балансировка нагрузки.")
+
+System_Boundary(site_b, "Сайт") {
+  Container(site_web, "Веб-приложение", "PHP, React.js", "Депозиты, ставки, заполнение заявки")
+}
+
+System_Boundary(cc_b, "Система кол-центра") {
+  Container(cc_ui, "Веб-интерфейс кол-центра", "React.js")
+  Container(cc_api, "Сервис заявок", "Java Spring Boot", "REST API приёма заявок с сайта")
+  ContainerDb(cc_db, "БД кол-центра", "PostgreSQL", "Заявки, статусы")
+}
+
+System_Boundary(ib_b, "Интернет-банк") {
+  Container(ib_web, "Веб-интерфейс интернет-банка", "React.js", "Депозиты, ставки, заявки")
+  Container(ib_core, "Монолит интернет-банка", "ASP.NET MVC, .NET Framework 4.5", "Платежи, СМС-подтверждение операций.")
+  ContainerDb(ib_db, "БД интернет-банка", "MS SQL", "Клиенты, счета, платежи")
+  Container(dep_svc, "Сервис заявок на открытие депозита", "C#, .NET (микросервис)", "Приём заявки, проверка подтверждения, хранение статуса")
+  Container(rates_svc, "Сервис ставок по депозитам", "C#, .NET (микросервис)", "Отдаёт ставки сайту и интернет-банку из кеша и БД, не обращаясь в АБС")
+  ContainerDb(dep_db, "БД депозитов и ставок", "MS SQL", "Заявки, статусы, ставки")
+}
+
+ContainerQueue(kafka, "Kafka")
+
+System_Boundary(abs_b, "АБС") {
+  Container(abs_adapter, "Адаптер интеграции АБС", "Java Spring Boot", "Читает Kafka и через Rate Limiter записывает заявки в АБС. Публикует ставки и статусы")
+  Container(abs_logic, "Логика АБС", "", "Модули: ставки, заявки на депозит, депозиты, СМС-уведомления. RBAC депозитов и кредитов")
+  ContainerDb(abs_db, "БД АБС", "Oracle", "Учёт операций, ставки, заявки")
+  Container(abs_client, "Десктоп-клиент АБС", "Delphi", "Рабочее место бэк-офиса и сотрудников отделений")
+}
+
+System(sms, "СМС-шлюз", "Отправка СМС через телеком-оператора")
+System_Ext(telecom, "Телеком-оператор", "Доставка СМС")
+
+Lay_R(client, cc_mgr)
+Lay_R(cc_mgr, dep_mgr)
+Lay_R(dep_mgr, cred_mgr)
+Lay_R(cred_mgr, front)
+Lay_R(site_web, ib_web)
+
+' Клиент открывает сайт или интернет-банк, затем запросы идут через API Gateway
+Rel_D(client, site_web, "Открывает сайт", "HTTPS")
+Rel_D(client, ib_web, "Открывает интернет-банк", "HTTPS")
+Rel(site_web, apiGw, "Запросы ставок и заявок", "HTTPS")
+Rel(ib_web, apiGw, "Запросы ставок, заявок, входа и СМС-подтверждения", "HTTPS")
+Rel(apiGw, ib_core, "Вход, платежи, СМС-подтверждение", "REST")
+Rel(apiGw, rates_svc, "Ставки", "REST")
+Rel(apiGw, cc_api, "Заявка с сайта", "REST")
+Rel(apiGw, dep_svc, "Заявка из интернет-банка", "REST")
+
+' Сценарий сайта
+Rel(cc_ui, cc_api, "Запросы", "HTTPS")
+Rel(cc_api, cc_db, "Читает и пишет", "SQL")
+Rel_D(cc_mgr, cc_ui, "Звонит клиенту, предлагает особые условия")
+
+' Сценарий интернет-банка
+Rel(ib_core, ib_db, "Читает и пишет", "SQL")
+Rel(ib_core, sms, "Отправка СМС-кода", "REST")
+Rel(dep_svc, dep_db, "Читает и пишет заявки", "SQL")
+Rel(rates_svc, dep_db, "Читает и обновляет ставки", "SQL")
+
+' Интеграция через Kafka
+Rel(dep_svc, kafka, "Публикует заявки", "Kafka")
+Rel(kafka, abs_adapter, "Заявки", "Kafka")
+Rel(abs_adapter, abs_logic, "Создаёт заявку (с ограничением скорости)", "PL/SQL")
+Rel(abs_adapter, kafka, "Публикует ставки и статусы", "Kafka")
+Rel(kafka, dep_svc, "Статусы заявок", "Kafka")
+Rel(kafka, rates_svc, "Обновление ставок", "Kafka")
+
+' АБС
+Rel(abs_logic, abs_db, "Читает и пишет", "SQL")
+Rel(abs_client, abs_logic, "Вызов процедур", "SQL*Net")
+Rel_D(dep_mgr, abs_client, "Подтверждает ставки и условия заявки")
+Rel_D(cred_mgr, abs_client, "Вносит показатели кредитного риска")
+Rel_D(front, abs_client, "Открывает депозит, загружает документы")
+Rel(abs_logic, sms, "СМС о ставке и открытии депозита", "SQL, HTTPS")
+Rel(sms, telecom, "Отправка СМС", "REST")
+
+Rel_U(telecom, client, "Доставка СМС")
+
+@enduml
