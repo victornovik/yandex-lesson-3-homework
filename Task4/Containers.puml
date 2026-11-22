@@ -1,0 +1,62 @@
+@startuml
+!include <C4/C4_Container>
+
+title Передача ставок в кол-центры
+
+Person(dep_mgr, "Менеджер бэк-офиса депозитов", "Ведёт ставки")
+Person(cc_op, "Оператор кол-центра банка", "Консультирует по ставкам")
+Person(partner_op, "Оператор партнёрского кол-центра", "Консультирует по ставкам")
+
+Container(apiGw, "Балансировщик и API Gateway", "Nginx", "Распределение запросов между серверами и ЦОД")
+
+System_Boundary(abs_b, "АБС") {
+  Container(abs_client, "Десктоп-клиент АБС", "Delphi", "Ввод и согласование ставок")
+  Container(abs_logic, "Логика АБС", "", "Ставки, RBAC депозитов и кредитов")
+  ContainerDb(abs_db, "БД АБС", "Oracle", "Ставки, outbox")
+  Container(abs_adapter, "Адаптер интеграции АБС", "Java Spring Boot", "Публикует изменения ставок в Kafka")
+}
+
+ContainerQueue(kafka, "Kafka")
+
+System_Boundary(ib_b, "Интернет-банк (сервисы депозитов)") {
+  Container(rates_svc, "Сервис ставок по депозитам", "C#, .NET", "Хранит актуальные ставки")
+  ContainerDb(rates_db, "БД депозитов", "MS SQL", "Актуальные ставки")
+  Container(rates_export, "Сервис выгрузки ставок", "C#, .NET", "Формирует файл со ставками и кладёт его на SFTP при изменении и раз в сутки")
+}
+
+System_Boundary(sftp_b, "SFTP") {
+  Container(sftp, "SFTP-сервер", "SFTP", "Каталог с файлом ставок")
+}
+
+System_Boundary(cc_b, "Система кол-центра") {
+  Container(cc_ui, "Веб-интерфейс кол-центра", "React.js", "Блок «Ставки по депозитам» у оператора")
+  Container(cc_api, "Сервис обращений", "Java Spring Boot", "Получает ставки по REST, кеширует")
+}
+
+System_Boundary(partner_b, "Партнёрский кол-центр") {
+  Container(partner_sys, "Система партнёрского кол-центра", "Внешняя система", "Загружает файл ставок и показывает операторам")
+}
+
+Lay_R(dep_mgr, cc_op)
+Lay_R(cc_op, partner_op)
+
+Rel_D(dep_mgr, abs_client, "Вводит и согласует ставки")
+Rel(abs_client, abs_logic, "Вызов процедур", "SQL*Net")
+Rel(abs_logic, abs_db, "Читает и пишет", "SQL")
+Rel(abs_adapter, abs_db, "Читает outbox", "SQL")
+Rel(abs_adapter, kafka, "Публикует ставки", "Kafka")
+Rel(kafka, rates_svc, "Обновление ставок", "Kafka")
+Rel(kafka, rates_export, "Обновление ставок", "Kafka")
+Rel(rates_svc, rates_db, "Читает и пишет", "SQL")
+Rel(rates_export, rates_db, "Зачитывает актуальные ставки на старте", "SQL")
+Rel(rates_export, sftp, "Кладёт файл ставок", "SFTP")
+
+Rel_D(cc_op, cc_ui, "Смотрит ставки при консультации")
+Rel(cc_ui, cc_api, "Запрашивает ставки", "HTTPS")
+Rel(cc_api, apiGw, "Запрашивает ставки", "HTTPS")
+Rel(apiGw, rates_svc, "Ставки", "REST")
+
+Rel(partner_sys, sftp, "Забирает файл ставок", "SFTP")
+Rel_D(partner_op, partner_sys, "Смотрит ставки при консультации")
+
+@enduml
