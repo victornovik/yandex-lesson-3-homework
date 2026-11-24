@@ -1,0 +1,48 @@
+@startuml
+title Схема интеграции приложений (AS-IS)
+
+left to right direction
+
+actor "Клиент" as Client
+actor "Сотрудник отделения" as FrontEmp
+actor "Оператор кол-центра" as CCOp
+actor "Оператор партнёрского кол-центра" as PartnerOp
+actor "Менеджер депозитов" as DepMgr
+actor "Сотрудник кредитования" as CredMgr
+
+component "Сайт" as Site
+component "Интернет-банк" as IB
+component "АБС" as ABS
+component "Система кол-центра" as CC
+component "Система партнёрского кол-центра" as PartnerCC
+component "СМС-шлюз" as SMSGW
+component "Excel" as Excel
+
+cloud "Телеком-оператор" as Telecom
+cloud "Центробанк" as CB
+
+Client --> Site
+Client --> IB
+Client --> CCOp
+Client --> FrontEmp
+Telecom --> Client : СМС
+
+IB --> ABS : БД
+CC --> ABS
+ABS --> SMSGW
+SMSGW --> Telecom
+
+CCOp --> CC
+PartnerOp --> PartnerCC
+
+FrontEmp --> ABS
+DepMgr --> ABS
+CredMgr --> ABS
+
+FrontEmp ..> DepMgr : e-mail
+DepMgr ..> CredMgr : e-mail
+CB ..> Excel : ставка рефинансирования
+CredMgr ..> DepMgr : e-mail (Excel)
+DepMgr --> Excel
+
+@enduml
